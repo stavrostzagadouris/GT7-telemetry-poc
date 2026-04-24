@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0a">
+<title>GT7</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --fg: #e8e8e8;
+    --dim: #666;
+    --green: #4ade80;
+    --red: #f87171;
+    --yellow: #facc15;
+    --cyan: #22d3ee;
+    --magenta: #e879f9;
+    --track: #1c1c1c;
+    --panel: #111;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    overscroll-behavior: none;
+    min-height: 100vh;
+  }
+  body {
+    padding: max(env(safe-area-inset-top), 12px) 14px max(env(safe-area-inset-bottom), 14px);
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    color: var(--dim);
+    margin-bottom: 12px;
+    gap: 10px;
+  }
+  .car {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+  }
+  .status {
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    flex: none;
+  }
+  .status.racing  { background: rgba(74,222,128,.18); color: var(--green); }
+  .status.paused  { background: rgba(250,204,21,.18); color: var(--yellow); }
+  .status.menu    { background: rgba(34,211,238,.18); color: var(--cyan); }
+  .status.loading { background: rgba(250,204,21,.18); color: var(--yellow); }
+  .status.offline { background: rgba(248,113,113,.18); color: var(--red); }
+  .status.nodata  { background: rgba(102,102,102,.25); color: var(--dim); }
+
+  .row { display: flex; gap: 10px; margin-bottom: 12px; }
+  .panel {
+    background: var(--panel);
+    border-radius: 14px;
+    padding: 14px;
+  }
+  .label {
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .speed-wrap { flex: 2; }
+  .gear-wrap  { flex: 1; display: flex; flex-direction: column; align-items: flex-start; }
+
+  .big-num {
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .speed-num { color: var(--cyan); font-size: 64px; }
+  .gear-num  { color: var(--magenta); font-size: 88px; }
+  .unit { font-size: 12px; color: var(--dim); margin-top: 4px; }
+  .suggest { font-size: 11px; color: var(--dim); margin-top: 4px; min-height: 1em; }
+
+  .bar-row { display: flex; align-items: center; gap: 10px; }
+  .bar-label { width: 44px; font-size: 11px; color: var(--dim); font-weight: 700; letter-spacing: 0.08em; }
+  .bar-track {
+    flex: 1;
+    height: 14px;
+    background: var(--track);
+    border-radius: 7px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 7px;
+    transition: width 60ms linear, background-color 120ms;
+  }
+  .bar-val { width: 52px; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
+
+  .rpm-track { height: 18px; }
+  /* No width transition on the RPM bar — the value updates at ~60 Hz,
+     so CSS interpolation just lags behind and looks stuttery. */
+  #rpm-fill { transition: background-color 120ms; }
+  .rpm-readout {
+    display: flex; justify-content: space-between;
+    font-size: 12px; color: var(--dim);
+    margin-top: 6px; font-variant-numeric: tabular-nums;
+  }
+
+  .lap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .lap-time {
+    font-size: 24px; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .lap-time.best { color: var(--green); }
+
+  .footer {
+    margin-top: 14px;
+    font-size: 11px;
+    color: var(--dim);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .divider {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 10px; letter-spacing: 0.18em;
+    color: var(--dim);
+    margin: 18px 0 10px;
+  }
+  .divider::before, .divider::after {
+    content: ""; flex: 1; height: 1px; background: #1c1c1c;
+  }
+
+  .kv-val {
+    font-size: 22px; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .kv-val .unit {
+    font-size: 11px; color: var(--dim);
+    font-weight: 400; margin-left: 3px;
+  }
+
+  .tyre-grid {
+    display: grid;
+    grid-template-columns: 68px repeat(4, 1fr);
+    gap: 6px 8px;
+    margin-top: 6px;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .tyre-grid .th, .tyre-grid .rh {
+    font-size: 10px; color: var(--dim);
+    letter-spacing: 0.1em;
+  }
+  .tyre-grid .th { text-align: center; }
+  .tyre-grid > div:not(.th):not(.rh) { text-align: center; }
+
+  .xyz {
+    display: flex; justify-content: space-between; gap: 8px;
+    font-size: 13px; font-variant-numeric: tabular-nums;
+  }
+  .xyz .axis { color: var(--dim); margin-right: 4px; }
+
+  @media (min-width: 500px) {
+    .speed-num { font-size: 88px; }
+    .gear-num  { font-size: 112px; }
+  }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <span id="status" class="status offline">OFFLINE</span>
+    <span id="car" class="car">—</span>
+  </div>
+
+  <div class="row">
+    <div class="panel speed-wrap">
+      <div class="label">Speed</div>
+      <div id="speed" class="big-num speed-num">0</div>
+      <div class="unit">km/h</div>
+    </div>
+    <div class="panel gear-wrap">
+      <div class="label">Gear</div>
+      <div id="gear" class="big-num gear-num">N</div>
+      <div id="sugg" class="suggest"></div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom: 12px;">
+    <div class="label">RPM</div>
+    <div class="bar-track rpm-track"><div id="rpm-fill" class="bar-fill"></div></div>
+    <div class="rpm-readout">
+      <span id="rpm-cur">0 rpm</span>
+      <span id="rpm-max">—</span>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom: 12px;">
+    <div class="bar-row" style="margin-bottom: 8px;">
+      <div class="bar-label">THR</div>
+      <div class="bar-track"><div id="thr-fill" class="bar-fill" style="background: var(--green);"></div></div>
+      <div class="bar-val" id="thr-val">0%</div>
+    </div>
+    <div class="bar-row">
+      <div class="bar-label">BRK</div>
+      <div class="bar-track"><div id="brk-fill" class="bar-fill" style="background: var(--red);"></div></div>
+      <div class="bar-val" id="brk-val">0%</div>
+    </div>
+  </div>
+
+  <div class="lap-grid">
+    <div class="panel">
+      <div class="label">Last lap</div>
+      <div id="last-lap" class="lap-time">—</div>
+    </div>
+    <div class="panel">
+      <div class="label">Best lap</div>
+      <div id="best-lap" class="lap-time best">—</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span id="lap-count">Lap —/—</span>
+    <span id="pkt">0 pkts</span>
+  </div>
+
+  <div class="divider">DETAILS</div>
+
+  <div class="row">
+    <div class="panel" style="flex:1;">
+      <div class="label">Fuel</div>
+      <div class="kv-val"><span id="fuel">—</span><span class="unit">L / <span id="fuel-cap">—</span> L</span></div>
+    </div>
+    <div class="panel" style="flex:1;">
+      <div class="label">Boost</div>
+      <div class="kv-val"><span id="boost">—</span><span class="unit">bar</span></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="panel" style="flex:1;">
+      <div class="label">Water</div>
+      <div class="kv-val"><span id="water">—</span><span class="unit">°C</span></div>
+    </div>
+    <div class="panel" style="flex:1;">
+      <div class="label">Oil</div>
+      <div class="kv-val"><span id="oil">—</span><span class="unit">°C</span></div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom: 12px;">
+    <div class="label">Tyres</div>
+    <div class="tyre-grid">
+      <div></div>
+      <div class="th">FL</div><div class="th">FR</div><div class="th">RL</div><div class="th">RR</div>
+      <div class="rh">Temp °C</div>
+      <div id="tt-0">—</div><div id="tt-1">—</div><div id="tt-2">—</div><div id="tt-3">—</div>
+      <div class="rh">Susp m</div>
+      <div id="sh-0">—</div><div id="sh-1">—</div><div id="sh-2">—</div><div id="sh-3">—</div>
+      <div class="rh">RPS</div>
+      <div id="rps-0">—</div><div id="rps-1">—</div><div id="rps-2">—</div><div id="rps-3">—</div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom: 12px;">
+    <div class="label">Position</div>
+    <div class="xyz">
+      <span><span class="axis">X</span><span id="pos-x">—</span></span>
+      <span><span class="axis">Y</span><span id="pos-y">—</span></span>
+      <span><span class="axis">Z</span><span id="pos-z">—</span></span>
+    </div>
+    <div class="label" style="margin-top:10px;">Velocity</div>
+    <div class="xyz">
+      <span><span class="axis">X</span><span id="vel-x">—</span></span>
+      <span><span class="axis">Y</span><span id="vel-y">—</span></span>
+      <span><span class="axis">Z</span><span id="vel-z">—</span></span>
+    </div>
+  </div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+
+  const fmtTime = (ms) => {
+    if (ms == null || ms < 0) return "—";
+    const m = Math.floor(ms / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    const r = ms % 1000;
+    return `${m}:${String(s).padStart(2, "0")}.${String(r).padStart(3, "0")}`;
+  };
+  const fmtGear = (g) => (g === 0 ? "R" : g === 15 ? "N" : String(g));
+  const rpmColor = (r) =>
+    r >= 0.9 ? "var(--red)" : r >= 0.7 ? "var(--yellow)" : "var(--green)";
+
+  let lastPacketAt = 0;
+  let wsConnected = false;
+
+  function setStatus(cls, text) {
+    const el = $("status");
+    el.className = "status " + cls;
+    el.textContent = text;
+  }
+
+  function applyStatus(t) {
+    if (t.loading)       setStatus("loading", "LOADING");
+    else if (t.paused)   setStatus("paused",  "PAUSED");
+    else if (t.in_race)  setStatus("racing",  "RACING");
+    else                 setStatus("menu",    "MENU");
+  }
+
+  let lastT = null;
+  function update(t) {
+    lastT = t;
+    lastPacketAt = Date.now();
+    applyStatus(t);
+    $("car").textContent = t.car_name || "—";
+
+    $("speed").textContent = t.speed_kmh.toFixed(0);
+
+    const gStr = fmtGear(t.gear);
+    $("gear").textContent = gStr;
+    const sg = fmtGear(t.sugg_gear);
+    $("sugg").textContent = sg === gStr || t.sugg_gear === 0 ? "" : `suggest ${sg}`;
+
+    const ratio = t.max_rpm > 0 ? Math.min(t.rpm / t.max_rpm, 1) : 0;
+    const fill = $("rpm-fill");
+    fill.style.width = (ratio * 100) + "%";
+    fill.style.backgroundColor = rpmColor(ratio);
+    $("rpm-cur").textContent = Math.round(t.rpm) + " rpm";
+    $("rpm-max").textContent = Math.round(t.max_rpm) + " max";
+
+    $("thr-fill").style.width = Math.min(t.throttle_pct, 100) + "%";
+    $("thr-val").textContent = t.throttle_pct.toFixed(0) + "%";
+    $("brk-fill").style.width = Math.min(t.brake_pct, 100) + "%";
+    $("brk-val").textContent = t.brake_pct.toFixed(0) + "%";
+
+    $("last-lap").textContent = fmtTime(t.last_lap_ms);
+    $("best-lap").textContent = fmtTime(t.best_lap_ms);
+    $("lap-count").textContent =
+      `Lap ${t.lap_count}/${t.total_laps > 0 ? t.total_laps : "—"}`;
+    $("pkt").textContent = `${t.pkt_count} pkts`;
+
+    const tempColor = (v) =>
+      v >= 100 ? "var(--red)" : v >= 80 ? "var(--yellow)" : "var(--green)";
+
+    $("fuel").textContent = t.fuel_l.toFixed(1);
+    $("fuel-cap").textContent = t.fuel_cap_l.toFixed(1);
+    $("boost").textContent = (t.boost_bar >= 0 ? "+" : "") + t.boost_bar.toFixed(2);
+
+    const water = $("water");
+    water.textContent = t.water_temp_c.toFixed(0);
+    water.style.color = tempColor(t.water_temp_c);
+    const oil = $("oil");
+    oil.textContent = t.oil_temp_c.toFixed(0);
+    oil.style.color = tempColor(t.oil_temp_c);
+
+    for (let i = 0; i < 4; i++) {
+      const tt = $(`tt-${i}`);
+      tt.textContent = t.tyre_temp[i].toFixed(0);
+      tt.style.color = tempColor(t.tyre_temp[i]);
+      $(`sh-${i}`).textContent = t.susp_height[i].toFixed(3);
+      $(`rps-${i}`).textContent = t.wheel_rps[i].toFixed(1);
+    }
+
+    $("pos-x").textContent = t.pos[0].toFixed(1);
+    $("pos-y").textContent = t.pos[1].toFixed(1);
+    $("pos-z").textContent = t.pos[2].toFixed(1);
+    $("vel-x").textContent = t.vel[0].toFixed(2);
+    $("vel-y").textContent = t.vel[1].toFixed(2);
+    $("vel-z").textContent = t.vel[2].toFixed(2);
+  }
+
+  function connect() {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.onopen = () => { wsConnected = true; };
+    ws.onmessage = (e) => {
+      try { update(JSON.parse(e.data)); }
+      catch (err) { console.error(err); }
+    };
+    ws.onclose = () => {
+      wsConnected = false;
+      setStatus("offline", "OFFLINE");
+      setTimeout(connect, 1000);
+    };
+    ws.onerror = () => { try { ws.close(); } catch (_) {} };
+  }
+
+  // stale-data detection: if we haven't heard from PS5 in >3s, show NO DATA
+  setInterval(() => {
+    if (!wsConnected) return;
+    if (Date.now() - lastPacketAt > 3000) {
+      setStatus("nodata", "NO DATA");
+    } else if (lastT) {
+      applyStatus(lastT);
+    }
+  }, 500);
+
+  // request screen wake lock on first tap (only works over https or localhost)
+  let wakeLock = null;
+  async function tryWakeLock() {
+    try {
+      if ("wakeLock" in navigator) {
+        wakeLock = await navigator.wakeLock.request("screen");
+      }
+    } catch (_) { /* needs gesture / https — ignore */ }
+  }
+  document.addEventListener("click", tryWakeLock, { once: true });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && wakeLock === null) tryWakeLock();
+  });
+
+  connect();
+})();
+</script>
+</body>
+</html>
