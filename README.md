@@ -1,3 +1,5 @@
+![GT7 Telemetry web dashboard](webDash.png)
+
 # GT7 Telemetry
 
 Decrypts Gran Turismo 7's Salsa20-encrypted UDP telemetry from a PS5 and shows it live. Two front-ends, same parser:
