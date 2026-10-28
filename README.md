@@ -97,14 +97,17 @@ GT7 doesn't send a track ID, so the dashboard works out the track from where you
 
 | Track | Layouts |
 |---|---|
-| Nürburgring Nordschleife | Nordschleife (6 corners named so far) |
+| Nürburgring Nordschleife | Nordschleife, with every corner named |
 | Red Bull Ring | Full, Short |
 | Brands Hatch | Grand Prix, Indy |
 | Goodwood | Motor Circuit |
 | Alsace | Village and Test Course, each forward and reverse |
 | Autodrome Lago Maggiore | Full Course, East, West, East End and West End, each forward and reverse except East End (reverse only) |
 
-These come from recorded laps in [vthinsel/GT7Tracks](https://github.com/vthinsel/GT7Tracks) (MIT, see `tracks/LICENSE-GT7Tracks.txt`), imported with `tools/import_gt7tracks.py`. Turns are numbered automatically. To name one, fill in `name` in `tracks/<track>_turns.csv`.
+These come from recorded laps in [vthinsel/GT7Tracks](https://github.com/vthinsel/GT7Tracks) (MIT, see `tracks/LICENSE-GT7Tracks.txt`), imported with `tools/import_gt7tracks.py`. Turns are detected automatically from the track's shape.
+
+- **Nordschleife:** all 49 detected turns carry their real corner names, from Hatzenbach to Galgenkopf. Corner positions came from [nring.info's corner map](https://nring.info/nurburgring-nordschleife-corners/), placed on the GT7 track by fitting the real track shape from [OpenStreetMap](https://www.openstreetmap.org/relation/38566) (© OpenStreetMap contributors) onto the GT7 line. The two agree to within about 6 m on average. Long sections such as Hatzenbach, Hohe Acht and Brünnchen cover several bends, so those names repeat, as drivers use them.
+- **Other tracks:** turns show as "Turn 1", "Turn 2" and so on. To name one, fill in `name` in `tracks/<track>_turns.csv`.
 
 **Shared road:** some layouts are built from the same pieces of tarmac, such as Brands Hatch Indy inside the GP circuit, or Lago Maggiore's variants. While you're on a shared stretch the dashboard can briefly show the wrong layout. It corrects itself as soon as you drive a piece only one of them has. From your second lap on it's correct straight away.
 
@@ -152,6 +155,8 @@ git push
 
 Your personal-best lap for each car and track is saved to `coach_refs.json`. That's what "slower than your best" compares against, so corner comparisons start after you've set a best lap. It's git-ignored, as personal data that stays on your machine.
 
+**Pronunciation:** Kokoro is an English voice and mangles German corner names ("Hocheichen" comes out as "Hot Chicken"). `tracks/pronunciations.csv` gives a phoneme spelling for each Nordschleife corner. Before a line is spoken, those names are swapped for Kokoro's inline form, `[Schwedenkreuz](/ʃvˈAdᵊnkɹˌYts/)`. Captions keep the normal spelling. To add a name, add a row: the name exactly as it appears in a `_turns.csv`, then its phonemes in [Kokoro's phoneme set](https://github.com/hexgrad/misaki/blob/main/EN_PHONES.md). Other TTS servers would read the brackets out loud, so empty that file if you use one.
+
 If `GT7_LLM_URL` is blank or the LLM is down, the coach speaks fixed fallback lines. If `GT7_TTS_URL` is blank or TTS is down, callouts show as captions only.
 
 ## Files
@@ -165,7 +170,7 @@ If `GT7_LLM_URL` is blank or the LLM is down, the coach speaks fixed fallback li
 | `trackbuild.py` | Lap cleaning, resampling and turn detection, shared by the importer and the recorder |
 | `coach.py` | Voice coach: event rules, LLM prompt, TTS |
 | `env.py` | Loads `.env` |
-| `tracks/` | Track lines, turns and metadata |
+| `tracks/` | Track lines, turns and metadata, plus `pronunciations.csv` for the voice |
 | `tools/import_gt7tracks.py` | Re-imports the GT7Tracks laps |
 | `.env.example` | Settings template; copy to `.env` |
 

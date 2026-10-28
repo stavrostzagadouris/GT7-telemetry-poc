@@ -9,6 +9,7 @@ can't invent problems that aren't in the data.
 
 import asyncio
 import base64
+import csv
 import json
 import os
 import re
@@ -27,6 +28,7 @@ TTS_URL = os.environ.get("GT7_TTS_URL", "").strip().rstrip("/")
 TTS_VOICE = os.environ.get("GT7_TTS_VOICE", "").strip() or "bm_george"
 
 REFS_FILE = Path(__file__).parent / "coach_refs.json"
+PRONUNCIATIONS_FILE = Path(__file__).parent / "tracks" / "pronunciations.csv"
 
 FPS = 60                  # GT7 sends ~60 packets/s; frame counts below assume it
 MIN_GAP_S = 7             # minimum quiet time between callouts
@@ -50,6 +52,7 @@ of pedal travel, or field names; translate them into driving language.
 of warmth; praise genuinely good laps.
 - Only use the facts given. Never invent pit calls, flags, rivals, damage, \
 weather, or numbers.
+- Write corner and track names exactly as they appear in the facts.
 - Vary your wording every time. Do not reuse phrasing from the recent lines \
 you are shown.
 """
@@ -75,6 +78,31 @@ FALLBACK = {
     "slow_corner": "Slow through {turn} compared to your best.",
     "lap_complete": "Lap done, {lap_time}.",
 }
+
+
+def load_pronunciations(path: Path = PRONUNCIATIONS_FILE):
+    """Regex + lookup for names Kokoro mispronounces (German corners etc.)."""
+    try:
+        with open(path) as f:
+            table = {r["name"].lower(): r["phonemes"] for r in csv.DictReader(f)}
+    except OSError:
+        return None, {}
+    if not table:
+        return None, {}
+    # longest first, so "Kleines Karussell" wins over "Karussell"
+    names = sorted(table, key=len, reverse=True)
+    pattern = re.compile(
+        r"(?<!\w)(" + "|".join(re.escape(n) for n in names) + r")(?!\w)", re.I
+    )
+    return pattern, table
+
+
+def for_speech(text: str, pattern, table: dict) -> str:
+    """Swap known names for Kokoro's inline pronunciation, [word](/phonemes/).
+    Only the audio uses this; captions keep the normal spelling."""
+    if pattern is None:
+        return text
+    return pattern.sub(lambda m: f"[{m.group(0)}](/{table[m.group(0).lower()]}/)", text)
 
 
 def fmt_laptime(ms: int) -> str | None:
@@ -109,6 +137,7 @@ class Coach:
         self.car_name = ""
         self.model = LLM_MODEL
         self.http = httpx.AsyncClient(timeout=10)
+        self.say_pattern, self.say_table = load_pronunciations()
 
         self.lockup = Detector(4)
         self.wheelspin = Detector(10)
@@ -328,7 +357,8 @@ class Coach:
 
     async def _tts(self, text: str) -> bytes:
         r = await self.http.post(f"{TTS_URL}/audio/speech", json={
-            "input": text, "voice": TTS_VOICE, "response_format": "mp3",
+            "input": for_speech(text, self.say_pattern, self.say_table),
+            "voice": TTS_VOICE, "response_format": "mp3",
         })
         r.raise_for_status()
         return r.content

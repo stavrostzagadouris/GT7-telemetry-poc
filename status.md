@@ -19,9 +19,8 @@
 
 - `~` heartbeat actually returns 0x158-byte packets on current firmware
 - Wheel slip reads ~1.00 when cruising (assumes 0xA4 is rad/s and 0xB4 is radius in m)
-- Nordschleife locks on within ~2 s and turn names line up. Named so far (best guesses):
-  Aremberg, Adenauer Forst, Wehrseifen, Bergwerk, Karussell, Galgenkopf. The rest are
-  "Turn N" — rename in `tracks/nordschleife_turns.csv` while driving.
+- Nordschleife locks on within a few hundred metres, and the corner names (all 49 turns,
+  placed via nring.info pins + OpenStreetMap shape fit, ~6 m RMS) match what's on screen
 - Capture a few raw packets to `tests/fixtures/` and add a `parse_packet` test
 - Lap boundary detection (lap count / last lap time changes) on a real session, since
   both the recorder and the start/finish learning depend on it
@@ -34,6 +33,7 @@
 - Rule-based detection -> LLM phrasing (endpoints from .env, thinking off) -> cleanTTS -> phone
 - Detection thresholds are guesses; tune once real slip values are seen
   (lock-up: front slip < 0.85; wheelspin: rear slip > 1.15 or TCS)
+- Corner names are spoken via Kokoro inline phonemes (`tracks/pronunciations.csv`); tune by ear
 - "Safe to talk" needs track position; on unknown tracks it falls back to steering angle
 
 ## Ideas
