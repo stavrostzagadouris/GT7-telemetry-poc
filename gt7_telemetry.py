@@ -35,6 +35,7 @@ IV_XOR = {b"~": 0x55FABB4F, b"B": 0xDEADBEEF, b"A": 0xDEADBEAF}
 SALSA_KEY = b"Simulator Interface Packet GT7 ver 0.0"[:32]
 
 CAR_DB_URL = "https://raw.githubusercontent.com/ddm999/gt7info/web-new/_data/db/cars.csv"
+COURSE_DB_URL = "https://raw.githubusercontent.com/ddm999/gt7info/web-new/_data/db/course.csv"
 
 def load_car_names() -> dict:
     try:
@@ -44,6 +45,19 @@ def load_car_names() -> dict:
         return {int(row["ID"]): row["ShortName"].strip() for row in reader if row["ID"].strip().lstrip("-").isdigit()}
     except Exception:
         return {}
+
+def load_courses() -> list[dict]:
+    """GT7's track layouts with official lengths, for naming recorded tracks."""
+    try:
+        with urllib.request.urlopen(COURSE_DB_URL, timeout=5) as resp:
+            text = resp.read().decode("utf-8")
+        return [
+            {"name": row["Name"].strip(), "length_m": float(row["Length"])}
+            for row in csv.DictReader(io.StringIO(text))
+            if row["Length"].strip()
+        ]
+    except Exception:
+        return []
 
 PACKET_A_MAGIC = 0x47375330  # 'G7S0'
 
@@ -191,9 +205,7 @@ class PacketStats:
 
 def add_track_info(t: dict, matcher: TrackMatcher) -> None:
     """Attach lap position / turn fields from the matcher (None when unknown)."""
-    t["track_pos"] = (
-        matcher.update(t["pos"][0], t["pos"][2]) if t["on_track"] else None
-    )
+    t["track_pos"] = matcher.update(t)
 
 
 def fmt_time(ms: int) -> str:
@@ -212,9 +224,11 @@ def fmt_track(tp: dict | None) -> str:
     if tp is None:
         return "unknown"
     here = tp["turn"]["label"] if tp["turn"] else "straight"
+    out = f"{tp['track']}  {tp['lap_dist_m']/1000:5.2f} km  {here}"
     nxt = tp["next_turn"]
-    return (f"{tp['track']}  {tp['lap_dist_m']/1000:5.2f} km  {here}"
-            f"  (next {nxt['label']} {nxt['dir']} in {tp['next_turn_in_m']:.0f} m)")
+    if nxt:
+        out += f"  (next {nxt['label']} {nxt['dir']} in {tp['next_turn_in_m']:.0f} m)"
+    return out
 
 def render(t: dict, stats: PacketStats, car_names: dict):
     HOME  = "\033[H"

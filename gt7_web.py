@@ -11,8 +11,9 @@ import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 import uvicorn
 
 from gt7_telemetry import (
@@ -24,11 +25,12 @@ from gt7_telemetry import (
     PacketStats,
     add_track_info,
     load_car_names,
+    load_courses,
     parse_args,
     parse_packet,
 )
 from coach import LLM_URL, TTS_URL, Coach
-from track import TrackMatcher
+from track import Track, TrackMatcher
 
 HOST = "0.0.0.0"
 WEB_PORT = 7000
@@ -70,12 +72,35 @@ class Client:
                 return   # socket is gone; ws_endpoint cleans up
 
 
+def track_recorded(track: Track) -> None:
+    """A lap of an unknown track was just saved: ask the dashboard to name it."""
+    send_to_all(json.dumps({"type": "track_recorded", "track": track_summary(track)}))
+
+
+def track_summary(track: Track) -> dict:
+    out = {
+        "id": track.slug,
+        "name": track.name,
+        "named": track.named,
+        "length_m": round(track.length),
+    }
+    if not track.named:
+        # GT7 layouts whose official length is closest to what was driven
+        out["suggestions"] = [
+            c["name"] for c in sorted(
+                S.courses, key=lambda c: abs(c["length_m"] - track.length)
+            )[:6]
+        ]
+    return out
+
+
 class AppState:
     def __init__(self) -> None:
         self.ps5_ip: str = PS5_IP
         self.car_names: dict[int, str] = {}
+        self.courses: list[dict] = []
         self.stats = PacketStats()
-        self.matcher = TrackMatcher()
+        self.matcher = TrackMatcher(on_recorded=track_recorded)
         self.clients: set[Client] = set()
         self.coach_enabled = True
         self.coach: Coach | None = None
@@ -126,6 +151,8 @@ async def lifespan(app: FastAPI):
         if S.car_names
         else "Car database unavailable, will show codes."
     )
+    S.courses = load_courses()
+    print(f"Loaded {len(S.matcher.tracks)} track maps.")
 
     loop = asyncio.get_running_loop()
     transport, _ = await loop.create_datagram_endpoint(
@@ -167,11 +194,33 @@ async def index():
 
 @app.get("/tracks")
 async def tracks():
-    """Centerlines for the track map, as [x, z] pairs."""
+    """Every known track, with its centerline as [x, z] pairs for the map."""
     return {
-        t.name: {"length_m": t.length, "points": t.map_points()}
+        t.slug: {**track_summary(t), "points": t.map_points()}
         for t in S.matcher.tracks
     }
+
+
+@app.get("/courses")
+async def courses():
+    """All GT7 layout names, for the 'name this track' picker."""
+    return [c["name"] for c in S.courses]
+
+
+class TrackName(BaseModel):
+    name: str
+
+
+@app.post("/tracks/{slug}/name")
+async def name_track(slug: str, body: TrackName):
+    track = S.matcher.get(slug)
+    name = body.name.strip()
+    if track is None:
+        raise HTTPException(404, "no such track")
+    if not name:
+        raise HTTPException(400, "name must not be empty")
+    track.rename(name[:80])
+    return track_summary(track)
 
 
 @app.websocket("/ws")

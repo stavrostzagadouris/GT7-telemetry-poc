@@ -139,7 +139,7 @@ class Coach:
             return None
         if tp["turn"]:
             return tp["turn"]["label"]
-        if tp["next_turn_in_m"] < 200:
+        if tp["next_turn"] and tp["next_turn_in_m"] < 200:
             return tp["next_turn"]["label"]
         return None
 
@@ -195,10 +195,10 @@ class Coach:
             self._prev_turn = None
             return
         cur = tp["turn"]["label"] if tp["turn"] else None
-        nxt = tp["next_turn"]["label"]
+        nxt = tp["next_turn"]["label"] if tp["next_turn"] else None
 
         # braking point = metres before the turn where the brake first goes on
-        if not cur and t["brake_pct"] > 15 and tp["next_turn_in_m"] < 300:
+        if nxt and not cur and t["brake_pct"] > 15 and tp["next_turn_in_m"] < 300:
             rec = self.lap_turns.setdefault(nxt, {})
             rec.setdefault("brake_m_before", round(tp["next_turn_in_m"]))
 
@@ -213,7 +213,7 @@ class Coach:
 
     def _ref_key(self, t: dict) -> str | None:
         tp = t.get("track_pos")
-        return f"{tp['track']}|{t['car_code']}" if tp else None
+        return f"{tp['track_id']}|{t['car_code']}" if tp else None
 
     def _turn_done(self, t: dict, turn: str) -> None:
         ref = self.refs.get(self._ref_key(t) or "", {}).get("turns", {}).get(turn)
@@ -280,6 +280,8 @@ class Coach:
             return True
         tp = t.get("track_pos")
         if tp:
+            if tp["next_turn"] is None:
+                return True
             speed_ms = t["speed_kmh"] / 3.6
             return tp["turn"] is None and tp["next_turn_in_m"] > max(150, speed_ms * 3.5)
         if "steering_rad" in t:

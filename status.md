@@ -9,7 +9,11 @@
   grid position (pre-race only), steering/sway/heave/surge (B), filtered pedals (~)
 - Web: per-client "latest frame only" sending, so a slow phone drops frames instead of lagging
 - PS5 IP configurable via `--ps5-ip` / `GT7_PS5_IP`
-- Nordschleife track map + lap distance + current/next turn (`track.py`, `tracks/`)
+- 19 track layouts imported from vthinsel/GT7Tracks (`tools/import_gt7tracks.py`)
+- Track auto-detection: every layout is a candidate, direction-checked; locks after ~200 m
+  with no rival, or provisionally after 1.5 km on shared road (self-corrects)
+- Unknown tracks are recorded automatically (one clean lap, line to line) and named
+  from the dashboard; start/finish line is learned on imported tracks
 
 ## To verify next time at the PS5
 
@@ -19,6 +23,11 @@
   Aremberg, Adenauer Forst, Wehrseifen, Bergwerk, Karussell, Galgenkopf. The rest are
   "Turn N" — rename in `tracks/nordschleife_turns.csv` while driving.
 - Capture a few raw packets to `tests/fixtures/` and add a `parse_packet` test
+- Lap boundary detection (lap count / last lap time changes) on a real session, since
+  both the recorder and the start/finish learning depend on it
+- Skipped imports: Lago Maggiore Centre, Centre Reverse and East End. Their dumps don't
+  match their official lengths; the "Centre" one is ~2016 m, i.e. probably East End.
+  Just drive them; the recorder will pick them up.
 
 ## Voice coach (`coach.py`) — built, tested with fake packets only
 

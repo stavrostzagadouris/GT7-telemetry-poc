@@ -207,8 +207,25 @@
   .turn-now { font-size: 22px; font-weight: 700; }
   .turn-next { font-size: 12px; color: var(--dim); text-align: right; }
   #track-map { width: 100%; height: auto; display: block; }
-  #track-map .line { fill: none; stroke: #333; stroke-width: 40; stroke-linejoin: round; }
-  #track-map .done { fill: none; stroke: var(--cyan); stroke-width: 40; stroke-linejoin: round; opacity: .5; }
+  #track-map .line { fill: none; stroke: #333; stroke-linejoin: round; }
+  #track-map .done { fill: none; stroke: var(--cyan); stroke-linejoin: round; opacity: .5; }
+
+  .name-card { border: 1px solid var(--magenta); margin-bottom: 12px; }
+  .name-card p { margin: 0 0 10px; font-size: 13px; line-height: 1.4; }
+  .name-row { display: flex; gap: 8px; }
+  .name-row input {
+    flex: 1; min-width: 0;
+    background: var(--track); color: var(--fg);
+    border: 1px solid #333; border-radius: 8px;
+    padding: 8px 10px; font: inherit; font-size: 14px;
+  }
+  .name-row button, .chip {
+    background: rgba(232,121,249,.18); color: var(--magenta);
+    border: 0; border-radius: 8px; padding: 8px 12px;
+    font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { font-size: 11px; font-weight: 400; padding: 5px 9px; border-radius: 999px; }
   #track-map .car  { fill: var(--magenta); }
 
   @media (min-width: 500px) {
@@ -276,6 +293,17 @@
   <div class="footer">
     <span id="lap-count">Lap —/—</span>
     <span id="pkt">0 pkts</span>
+  </div>
+
+  <div id="name-card" class="panel name-card" style="margin-top: 12px; display: none;">
+    <div class="label">New track recorded</div>
+    <p id="name-msg"></p>
+    <div class="name-row">
+      <input id="name-input" list="course-list" placeholder="Track name" autocomplete="off">
+      <button id="name-save">Save</button>
+    </div>
+    <div id="name-chips" class="chips"></div>
+    <datalist id="course-list"></datalist>
   </div>
 
   <div id="track-panel" class="panel" style="margin-top: 12px; display: none;">
@@ -460,17 +488,29 @@
   // ---- track map ----
   const SVG_NS = "http://www.w3.org/2000/svg";
   let tracks = {};
-  let drawn = null;       // name of the track currently in the SVG
+  let drawn = null;       // id of the track currently in the SVG
   let mapEls = null;
+  let lastFetch = 0;
 
-  fetch("/tracks").then((r) => r.json()).then((d) => { tracks = d; }).catch(() => {});
+  function loadTracks() {
+    lastFetch = Date.now();
+    return fetch("/tracks").then((r) => r.json()).then((d) => {
+      tracks = d;
+      const unnamed = Object.values(d).find((tr) => !tr.named);
+      if (unnamed) askName(unnamed);
+    }).catch(() => {});
+  }
+  loadTracks();
 
-  function drawTrack(name) {
-    const tr = tracks[name];
-    if (!tr) return;   // /tracks not loaded yet; try again next frame
+  function drawTrack(id) {
+    const tr = tracks[id];
+    if (!tr) {   // not loaded yet, or recorded since the page opened
+      if (Date.now() - lastFetch > 3000) loadTracks();
+      return;
+    }
     const svg = $("track-map");
     svg.innerHTML = "";
-    drawn = name;
+    drawn = id;
     const pts = tr.points;
     const xs = pts.map((p) => p[0]), zs = pts.map((p) => p[1]);
     const pad = 60;
@@ -478,15 +518,16 @@
     svg.setAttribute("viewBox",
       `${minX} ${minZ} ${Math.max(...xs) + pad - minX} ${Math.max(...zs) + pad - minZ}`);
     const d = "M" + pts.map((p) => `${p[0].toFixed(0)},${p[1].toFixed(0)}`).join("L") + "Z";
+    const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs));
     const mk = (tag, attrs) => {
       const el = document.createElementNS(SVG_NS, tag);
       for (const k in attrs) el.setAttribute(k, attrs[k]);
       svg.appendChild(el);
       return el;
     };
-    mk("path", { d, class: "line" });
-    const done = mk("path", { d, class: "done", pathLength: 1000 });
-    const car = mk("circle", { r: 110, class: "car" });
+    mk("path", { d, class: "line", "stroke-width": span / 150 });
+    const done = mk("path", { d, class: "done", pathLength: 1000, "stroke-width": span / 150 });
+    const car = mk("circle", { r: span / 55, class: "car" });
     mapEls = { done, car };
   }
 
@@ -495,23 +536,74 @@
     const panel = $("track-panel");
     if (!tp) { panel.style.display = "none"; return; }
     panel.style.display = "";
-    if (drawn !== tp.track) drawTrack(tp.track);
+    if (drawn !== tp.track_id) drawTrack(tp.track_id);
 
     $("track-name").textContent = tp.track;
     $("turn-now").textContent = tp.turn ? tp.turn.label : "Straight";
     $("lap-dist").textContent = (tp.lap_dist_m / 1000).toFixed(2) + " km";
     const n = tp.next_turn;
-    $("turn-next").textContent =
-      `next ${n.label} ${n.dir} · ${Math.round(tp.next_turn_in_m)} m`;
+    $("turn-next").textContent = n
+      ? `next ${n.label} ${n.dir} · ${Math.round(tp.next_turn_in_m)} m` : "";
 
     if (mapEls) {
       mapEls.car.setAttribute("cx", t.pos[0]);
       mapEls.car.setAttribute("cy", t.pos[2]);
-      // light up the part of the lap already driven
+      // Light up the lap so far, from start/finish to the car. The path is
+      // drawn from wherever the recording began, so shift by start_frac; a
+      // dash pattern exactly one lap long wraps past the path's end for free.
       const f = Math.max(0, Math.min(1, tp.lap_frac)) * 1000;
-      mapEls.done.setAttribute("stroke-dasharray", `${f} 1000`);
+      mapEls.done.setAttribute("stroke-dasharray", `${f} ${1000 - f}`);
+      mapEls.done.setAttribute("stroke-dashoffset", -tp.start_frac * 1000);
     }
   }
+
+  // ---- naming recorded tracks ----
+  let naming = null;   // id of the track the card is asking about
+  let coursesLoaded = false;
+
+  function askName(tr) {
+    naming = tr.id;
+    $("name-msg").textContent =
+      `You drove a lap of a track I didn't know (${(tr.length_m / 1000).toFixed(2)} km), ` +
+      `so I saved it. What is it?`;
+    $("name-input").value = "";
+    const chips = $("name-chips");
+    chips.innerHTML = "";
+    for (const s of tr.suggestions || []) {
+      const b = document.createElement("button");
+      b.className = "chip";
+      b.textContent = s;
+      b.onclick = () => { $("name-input").value = s; };
+      chips.appendChild(b);
+    }
+    $("name-card").style.display = "";
+    if (!coursesLoaded) {
+      coursesLoaded = true;
+      fetch("/courses").then((r) => r.json()).then((names) => {
+        $("course-list").innerHTML = names.map((n) => {
+          const o = document.createElement("option");
+          o.value = n;
+          return o.outerHTML;
+        }).join("");
+      }).catch(() => { coursesLoaded = false; });
+    }
+  }
+
+  $("name-save").addEventListener("click", () => {
+    const name = $("name-input").value.trim();
+    if (!naming || !name) return;
+    fetch(`/tracks/${naming}/name`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+    }).then((r) => {
+      if (!r.ok) return;
+      $("name-card").style.display = "none";
+      naming = null;
+      drawn = null;
+      loadTracks();
+    }).catch(() => {});
+  });
 
   // ---- voice coach ----
   // Phones only allow audio after a tap, so the first tap plays a silent
@@ -573,6 +665,7 @@
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === "coach") coachSay(msg);
+        else if (msg.type === "track_recorded") loadTracks();
         else update(msg);
       }
       catch (err) { console.error(err); }
