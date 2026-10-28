@@ -55,7 +55,7 @@
     letter-spacing: 0.08em;
     flex: none;
   }
-  .status.racing  { background: rgba(74,222,128,.18); color: var(--green); }
+  .status.ontrack { background: rgba(74,222,128,.18); color: var(--green); }
   .status.paused  { background: rgba(250,204,21,.18); color: var(--yellow); }
   .status.menu    { background: rgba(34,211,238,.18); color: var(--cyan); }
   .status.loading { background: rgba(250,204,21,.18); color: var(--yellow); }
@@ -174,6 +174,43 @@
   }
   .xyz .axis { color: var(--dim); margin-right: 4px; }
 
+  .aids { display: flex; gap: 6px; flex: none; }
+  .aid {
+    padding: 3px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    background: rgba(250,204,21,.18); color: var(--yellow);
+    visibility: hidden;
+  }
+  .aid.on { visibility: visible; }
+
+  .coach-btn {
+    padding: 3px 10px; border-radius: 999px; border: 0;
+    font: inherit; font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    background: rgba(232,121,249,.18); color: var(--magenta);
+    flex: none; cursor: pointer;
+  }
+  .coach-btn.off { background: rgba(102,102,102,.25); color: var(--dim); }
+  .coach-line {
+    font-size: 14px; line-height: 1.35;
+    color: var(--magenta);
+    border-left: 3px solid var(--magenta);
+    padding: 6px 10px; margin-bottom: 12px;
+    background: var(--panel); border-radius: 0 10px 10px 0;
+    transition: opacity 1s;
+  }
+  .coach-line.old { opacity: .45; }
+
+  .track-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 10px; margin-bottom: 8px;
+  }
+  .turn-now { font-size: 22px; font-weight: 700; }
+  .turn-next { font-size: 12px; color: var(--dim); text-align: right; }
+  #track-map { width: 100%; height: auto; display: block; }
+  #track-map .line { fill: none; stroke: #333; stroke-width: 40; stroke-linejoin: round; }
+  #track-map .done { fill: none; stroke: var(--cyan); stroke-width: 40; stroke-linejoin: round; opacity: .5; }
+  #track-map .car  { fill: var(--magenta); }
+
   @media (min-width: 500px) {
     .speed-num { font-size: 88px; }
     .gear-num  { font-size: 112px; }
@@ -183,8 +220,12 @@
 <body>
   <div class="topbar">
     <span id="status" class="status offline">OFFLINE</span>
+    <span class="aids"><span id="tcs" class="aid">TCS</span><span id="asm" class="aid">ASM</span></span>
+    <button id="coach-btn" class="coach-btn off">TAP FOR COACH</button>
     <span id="car" class="car">—</span>
   </div>
+
+  <div id="coach-line" class="coach-line" style="display: none;"></div>
 
   <div class="row">
     <div class="panel speed-wrap">
@@ -237,6 +278,20 @@
     <span id="pkt">0 pkts</span>
   </div>
 
+  <div id="track-panel" class="panel" style="margin-top: 12px; display: none;">
+    <div class="track-head">
+      <div>
+        <div class="label" id="track-name">Track</div>
+        <div id="turn-now" class="turn-now">—</div>
+      </div>
+      <div class="turn-next">
+        <div id="lap-dist">—</div>
+        <div id="turn-next">—</div>
+      </div>
+    </div>
+    <svg id="track-map" preserveAspectRatio="xMidYMid meet"></svg>
+  </div>
+
   <div class="divider">DETAILS</div>
 
   <div class="row">
@@ -272,6 +327,8 @@
       <div id="sh-0">—</div><div id="sh-1">—</div><div id="sh-2">—</div><div id="sh-3">—</div>
       <div class="rh">RPS</div>
       <div id="rps-0">—</div><div id="rps-1">—</div><div id="rps-2">—</div><div id="rps-3">—</div>
+      <div class="rh">Slip</div>
+      <div id="slip-0">—</div><div id="slip-1">—</div><div id="slip-2">—</div><div id="slip-3">—</div>
     </div>
   </div>
 
@@ -302,8 +359,13 @@
     return `${m}:${String(s).padStart(2, "0")}.${String(r).padStart(3, "0")}`;
   };
   const fmtGear = (g) => (g === 0 ? "R" : g === 15 ? "N" : String(g));
-  const rpmColor = (r) =>
-    r >= 0.9 ? "var(--red)" : r >= 0.7 ? "var(--yellow)" : "var(--green)";
+  const rpmColor = (t) =>
+    t.max_rpm > 0 && t.rpm >= t.max_rpm ? "var(--red)"
+    : t.shift_rpm > 0 && t.rpm >= t.shift_rpm ? "var(--yellow)"
+    : "var(--green)";
+  const slipColor = (s) =>
+    Math.abs(s - 1) > 0.10 ? "var(--red)"
+    : Math.abs(s - 1) > 0.04 ? "var(--yellow)" : "var(--green)";
 
   let lastPacketAt = 0;
   let wsConnected = false;
@@ -317,7 +379,7 @@
   function applyStatus(t) {
     if (t.loading)       setStatus("loading", "LOADING");
     else if (t.paused)   setStatus("paused",  "PAUSED");
-    else if (t.in_race)  setStatus("racing",  "RACING");
+    else if (t.on_track) setStatus("ontrack", "ON TRACK");
     else                 setStatus("menu",    "MENU");
   }
 
@@ -338,7 +400,7 @@
     const ratio = t.max_rpm > 0 ? Math.min(t.rpm / t.max_rpm, 1) : 0;
     const fill = $("rpm-fill");
     fill.style.width = (ratio * 100) + "%";
-    fill.style.backgroundColor = rpmColor(ratio);
+    fill.style.backgroundColor = rpmColor(t);
     $("rpm-cur").textContent = Math.round(t.rpm) + " rpm";
     $("rpm-max").textContent = Math.round(t.max_rpm) + " max";
 
@@ -351,7 +413,11 @@
     $("best-lap").textContent = fmtTime(t.best_lap_ms);
     $("lap-count").textContent =
       `Lap ${t.lap_count}/${t.total_laps > 0 ? t.total_laps : "—"}`;
-    $("pkt").textContent = `${t.pkt_count} pkts`;
+    $("pkt").textContent =
+      `${t.pkt_count} pkts` + (t.pkt_dropped ? ` · ${t.pkt_dropped} lost` : "");
+    $("tcs").classList.toggle("on", t.tcs_active);
+    $("asm").classList.toggle("on", t.asm_active);
+    updateTrack(t);
 
     const tempColor = (v) =>
       v >= 100 ? "var(--red)" : v >= 80 ? "var(--yellow)" : "var(--green)";
@@ -373,6 +439,14 @@
       tt.style.color = tempColor(t.tyre_temp[i]);
       $(`sh-${i}`).textContent = t.susp_height[i].toFixed(3);
       $(`rps-${i}`).textContent = t.wheel_rps[i].toFixed(1);
+      const sl = $(`slip-${i}`);
+      if (t.wheel_slip) {
+        sl.textContent = t.wheel_slip[i].toFixed(2);
+        sl.style.color = slipColor(t.wheel_slip[i]);
+      } else {
+        sl.textContent = "—";
+        sl.style.color = "";
+      }
     }
 
     $("pos-x").textContent = t.pos[0].toFixed(1);
@@ -383,12 +457,124 @@
     $("vel-z").textContent = t.vel[2].toFixed(2);
   }
 
+  // ---- track map ----
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  let tracks = {};
+  let drawn = null;       // name of the track currently in the SVG
+  let mapEls = null;
+
+  fetch("/tracks").then((r) => r.json()).then((d) => { tracks = d; }).catch(() => {});
+
+  function drawTrack(name) {
+    const tr = tracks[name];
+    if (!tr) return;   // /tracks not loaded yet; try again next frame
+    const svg = $("track-map");
+    svg.innerHTML = "";
+    drawn = name;
+    const pts = tr.points;
+    const xs = pts.map((p) => p[0]), zs = pts.map((p) => p[1]);
+    const pad = 60;
+    const minX = Math.min(...xs) - pad, minZ = Math.min(...zs) - pad;
+    svg.setAttribute("viewBox",
+      `${minX} ${minZ} ${Math.max(...xs) + pad - minX} ${Math.max(...zs) + pad - minZ}`);
+    const d = "M" + pts.map((p) => `${p[0].toFixed(0)},${p[1].toFixed(0)}`).join("L") + "Z";
+    const mk = (tag, attrs) => {
+      const el = document.createElementNS(SVG_NS, tag);
+      for (const k in attrs) el.setAttribute(k, attrs[k]);
+      svg.appendChild(el);
+      return el;
+    };
+    mk("path", { d, class: "line" });
+    const done = mk("path", { d, class: "done", pathLength: 1000 });
+    const car = mk("circle", { r: 110, class: "car" });
+    mapEls = { done, car };
+  }
+
+  function updateTrack(t) {
+    const tp = t.track_pos;
+    const panel = $("track-panel");
+    if (!tp) { panel.style.display = "none"; return; }
+    panel.style.display = "";
+    if (drawn !== tp.track) drawTrack(tp.track);
+
+    $("track-name").textContent = tp.track;
+    $("turn-now").textContent = tp.turn ? tp.turn.label : "Straight";
+    $("lap-dist").textContent = (tp.lap_dist_m / 1000).toFixed(2) + " km";
+    const n = tp.next_turn;
+    $("turn-next").textContent =
+      `next ${n.label} ${n.dir} · ${Math.round(tp.next_turn_in_m)} m`;
+
+    if (mapEls) {
+      mapEls.car.setAttribute("cx", t.pos[0]);
+      mapEls.car.setAttribute("cy", t.pos[2]);
+      // light up the part of the lap already driven
+      const f = Math.max(0, Math.min(1, tp.lap_frac)) * 1000;
+      mapEls.done.setAttribute("stroke-dasharray", `${f} 1000`);
+    }
+  }
+
+  // ---- voice coach ----
+  // Phones only allow audio after a tap, so the first tap plays a silent
+  // clip on our <audio> element; later callouts can then play on their own.
+  const voice = new Audio();
+  const coachQueue = [];
+  let coachOn = false;
+  let coachFade = null;
+
+  function silentWav() {
+    const n = 800, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+    const str = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+    str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVEfmt ");
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 8000, true); v.setUint32(28, 16000, true);
+    v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    str(36, "data"); v.setUint32(40, n * 2, true);
+    return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+  }
+
+  function setCoach(on) {
+    coachOn = on;
+    const b = $("coach-btn");
+    b.classList.toggle("off", !on);
+    b.textContent = on ? "COACH ON" : "COACH OFF";
+    if (!on) { voice.pause(); coachQueue.length = 0; }
+  }
+
+  $("coach-btn").addEventListener("click", () => {
+    if (!coachOn && !voice.dataset.unlocked) {
+      voice.src = silentWav();
+      voice.play().then(() => { voice.dataset.unlocked = "1"; }).catch(() => {});
+    }
+    setCoach(!coachOn);
+  });
+
+  function playNext() {
+    if (!coachOn || !voice.paused || !coachQueue.length) return;
+    voice.src = "data:audio/mpeg;base64," + coachQueue.shift();
+    voice.play().catch(() => {});
+  }
+  voice.addEventListener("ended", playNext);
+
+  function coachSay(msg) {
+    const line = $("coach-line");
+    line.textContent = msg.text;
+    line.style.display = "";
+    line.classList.remove("old");
+    clearTimeout(coachFade);
+    coachFade = setTimeout(() => line.classList.add("old"), 8000);
+    if (coachOn && msg.audio) { coachQueue.push(msg.audio); playNext(); }
+  }
+
   function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
     ws.onopen = () => { wsConnected = true; };
     ws.onmessage = (e) => {
-      try { update(JSON.parse(e.data)); }
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "coach") coachSay(msg);
+        else update(msg);
+      }
       catch (err) { console.error(err); }
     };
     ws.onclose = () => {

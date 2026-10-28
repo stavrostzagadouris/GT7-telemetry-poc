@@ -1,3 +1,4 @@
-pycryptodome
-fastapi
-uvicorn[standard]
+pycryptodome==4.2.0
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+httpx==0.28.1

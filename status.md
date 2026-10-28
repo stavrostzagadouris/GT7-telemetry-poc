@@ -2,27 +2,32 @@
 
 ## What's done
 
-- Live UDP telemetry dashboard reading encrypted GT7 packets from PS5
-- Fixed several wrong packet offsets (suspension, wheel RPS, car code, loading flag)
-- Car names resolved at startup by fetching ddm999/gt7info `cars.csv`
-- Lap timing shows best and last lap only (no current lap — GT7 doesn't broadcast it)
+- Live UDP telemetry, terminal + web (FastAPI/WebSocket) dashboards sharing one parser
+- Requests the `~` packet (0x158 bytes); decrypt falls back to `B`/`A` IV keys
+- Added fields: shift-light RPM (0x88), clutch, tyre radius, wheel slip ratio, rotation,
+  angular velocity, packet ID (dropped-packet count), TCS/ASM/handbrake/rev-limiter flags,
+  grid position (pre-race only), steering/sway/heave/surge (B), filtered pedals (~)
+- Web: per-client "latest frame only" sending, so a slow phone drops frames instead of lagging
+- PS5 IP configurable via `--ps5-ip` / `GT7_PS5_IP`
+- Nordschleife track map + lap distance + current/next turn (`track.py`, `tracks/`)
 
-## Nürburgring turn detection — planned, not started
+## To verify next time at the PS5
 
-Goal: show the current turn name as the car passes through it.
+- `~` heartbeat actually returns 0x158-byte packets on current firmware
+- Wheel slip reads ~1.00 when cruising (assumes 0xA4 is rad/s and 0xB4 is radius in m)
+- Nordschleife locks on within ~2 s and turn names line up. Named so far (best guesses):
+  Aremberg, Adenauer Forst, Wehrseifen, Bergwerk, Karussell, Galgenkopf. The rest are
+  "Turn N" — rename in `tracks/nordschleife_turns.csv` while driving.
+- Capture a few raw packets to `tests/fixtures/` and add a `parse_packet` test
 
-**Findings:**
-- GT7 packet has no track ID field — track is unidentifiable from telemetry alone
-- No public coordinate-to-turn-name database exists for GT7's Nürburgring
-- The GT7Tracks ML project (vthinsel/GT7Tracks) is overkill; a simple nearest-neighbor lookup is sufficient
+## Voice coach (`coach.py`) — built, tested with fake packets only
 
-**Plan:**
-1. Add a lap recorder mode to `gt7_telemetry.py` — logs X/Z positions to CSV during a lap
-2. Build a small annotation script — scrub the recording and tag turn entry points with names
-3. At runtime, do a nearest-neighbor lookup against the annotated CSV to show current turn
+- Rule-based detection -> LLM phrasing (endpoints from .env, thinking off) -> cleanTTS -> phone
+- Detection thresholds are guesses; tune once real slip values are seen
+  (lock-up: front slip < 0.85; wheelspin: rear slip > 1.15 or TCS)
+- "Safe to talk" needs track position; on unknown tracks it falls back to steering angle
 
-## Next session
+## Ideas
 
-**Build a web app** (not a terminal dashboard).
-
-Start fresh or port `gt7_telemetry.py` as a backend. Frontend displays the same telemetry data in a browser.
+- Pace notes ("Karussell, left, two hundred") as an optional mode
+- Live delta to best lap by lap distance
