@@ -72,6 +72,14 @@ class Client:
                 return   # socket is gone; ws_endpoint cleans up
 
 
+def coach_state() -> str:
+    return json.dumps({
+        "type": "coach_state",
+        "available": S.coach is not None,
+        "corner_names": bool(S.coach and S.coach.corner_names),
+    })
+
+
 def track_recorded(track: Track) -> None:
     """A lap of an unknown track was just saved: ask the dashboard to name it."""
     send_to_all(json.dumps({"type": "track_recorded", "track": track_summary(track)}))
@@ -166,7 +174,8 @@ async def lifespan(app: FastAPI):
         print(
             "Coach on (disable with --no-coach): "
             f"LLM {LLM_URL or 'not set, using fixed lines'}, "
-            f"TTS {TTS_URL or 'not set, captions only'}"
+            f"TTS {TTS_URL or 'not set, captions only'}; "
+            f"corner names {'on' if S.coach.corner_names else 'off'}"
         )
     print(
         f"Listening on UDP :{LISTEN_PORT}, "
@@ -190,6 +199,13 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/")
 async def index():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/keepawake.mp4")
+async def keepawake():
+    """Tiny silent looping video; playing it keeps a phone's screen on where
+    the Wake Lock API isn't allowed (plain http on the LAN)."""
+    return FileResponse(STATIC_DIR / "keepawake.mp4")
 
 
 @app.get("/tracks")
@@ -229,9 +245,16 @@ async def ws_endpoint(ws: WebSocket):
     client = Client(ws)
     S.clients.add(client)
     sender = asyncio.create_task(client.send_loop())
+    client.send(coach_state())
     try:
         while True:
-            await ws.receive_text()
+            try:
+                msg = json.loads(await ws.receive_text())
+            except ValueError:
+                continue
+            if msg.get("type") == "corner_names" and S.coach:
+                S.coach.set_corner_names(bool(msg.get("on")))
+                send_to_all(coach_state())
     except WebSocketDisconnect:
         pass
     finally:

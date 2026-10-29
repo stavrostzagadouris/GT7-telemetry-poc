@@ -33,6 +33,9 @@
 - Rule-based detection -> LLM phrasing (endpoints from .env, thinking off) -> cleanTTS -> phone
 - Detection thresholds are guesses; tune once real slip values are seen
   (lock-up: front slip < 0.85; wheelspin: rear slip > 1.15 or TCS)
+- Corner-name callouts (learn mode, on by default, CORNERS button) tested in a simulated
+  Nordschleife drive: each name arrives ~2.5 s before its section. Not yet tried on a real lap
+- Phone screen kept on by a silent looping video (Wake Lock needs https); check it on the phone
 - Corner names are spoken via Kokoro inline phonemes (`tracks/pronunciations.csv`); tune by ear
 - "Safe to talk" needs track position; on unknown tracks it falls back to steering angle
 

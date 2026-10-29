@@ -190,6 +190,12 @@
     flex: none; cursor: pointer;
   }
   .coach-btn.off { background: rgba(102,102,102,.25); color: var(--dim); }
+  #names-btn { display: none; }
+  /* keeps the screen on; must stay on screen or the phone pauses it */
+  #keepawake {
+    position: fixed; right: 0; bottom: 0; width: 2px; height: 2px;
+    opacity: .01; pointer-events: none;
+  }
   .coach-line {
     font-size: 14px; line-height: 1.35;
     color: var(--magenta);
@@ -239,10 +245,12 @@
     <span id="status" class="status offline">OFFLINE</span>
     <span class="aids"><span id="tcs" class="aid">TCS</span><span id="asm" class="aid">ASM</span></span>
     <button id="coach-btn" class="coach-btn off">TAP FOR COACH</button>
+    <button id="names-btn" class="coach-btn off">CORNERS</button>
     <span id="car" class="car">—</span>
   </div>
 
   <div id="coach-line" class="coach-line" style="display: none;"></div>
+  <video id="keepawake" src="/keepawake.mp4" muted loop playsinline preload="auto"></video>
 
   <div class="row">
     <div class="panel speed-wrap">
@@ -640,13 +648,17 @@
     setCoach(!coachOn);
   });
 
+  let playingPriority = false;
   function playNext() {
     if (!coachOn || !voice.paused || !coachQueue.length) return;
-    voice.src = "data:audio/mpeg;base64," + coachQueue.shift();
+    const next = coachQueue.shift();
+    playingPriority = next.priority;
+    voice.src = "data:audio/mpeg;base64," + next.audio;
     voice.play().catch(() => {});
   }
   voice.addEventListener("ended", playNext);
 
+  // Corner names jump the queue and cut off other coaching (not each other).
   function coachSay(msg) {
     const line = $("coach-line");
     line.textContent = msg.text;
@@ -654,17 +666,44 @@
     line.classList.remove("old");
     clearTimeout(coachFade);
     coachFade = setTimeout(() => line.classList.add("old"), 8000);
-    if (coachOn && msg.audio) { coachQueue.push(msg.audio); playNext(); }
+    if (!coachOn || !msg.audio) return;
+    const clip = { audio: msg.audio, priority: !!msg.priority };
+    if (clip.priority) {
+      const names = coachQueue.filter(c => c.priority);
+      coachQueue.length = 0;
+      coachQueue.push(...names, clip);
+      if (!playingPriority) voice.pause();
+    } else {
+      coachQueue.push(clip);
+    }
+    playNext();
   }
+
+  // Corner-name callouts (for learning a track) can be switched on and off;
+  // the server holds the setting so every open dashboard agrees.
+  let ws = null;
+  function showCoachState(msg) {
+    const b = $("names-btn");
+    b.style.display = msg.available ? "" : "none";
+    b.classList.toggle("off", !msg.corner_names);
+    b.textContent = msg.corner_names ? "CORNERS ON" : "CORNERS OFF";
+    b.dataset.on = msg.corner_names ? "1" : "";
+  }
+  $("names-btn").addEventListener("click", () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "corner_names", on: !$("names-btn").dataset.on }));
+    }
+  });
 
   function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
     ws.onopen = () => { wsConnected = true; };
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === "coach") coachSay(msg);
+        else if (msg.type === "coach_state") showCoachState(msg);
         else if (msg.type === "track_recorded") loadTracks();
         else update(msg);
       }
@@ -688,18 +727,26 @@
     }
   }, 500);
 
-  // request screen wake lock on first tap (only works over https or localhost)
+  // Keep the screen on. The Wake Lock API only exists on https or
+  // localhost, so over plain http on the LAN we fall back to playing a tiny
+  // silent looping video, which phones treat as "watching something".
+  // Either needs a tap first, and is lost when the page is hidden.
   let wakeLock = null;
-  async function tryWakeLock() {
-    try {
-      if ("wakeLock" in navigator) {
-        wakeLock = await navigator.wakeLock.request("screen");
-      }
-    } catch (_) { /* needs gesture / https — ignore */ }
+  async function keepAwake() {
+    if ("wakeLock" in navigator) {
+      try {
+        if (wakeLock === null) {
+          wakeLock = await navigator.wakeLock.request("screen");
+          wakeLock.addEventListener("release", () => { wakeLock = null; });
+        }
+        return;
+      } catch (_) { /* not allowed: fall through to the video */ }
+    }
+    $("keepawake").play().catch(() => {});
   }
-  document.addEventListener("click", tryWakeLock, { once: true });
+  document.addEventListener("click", keepAwake);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && wakeLock === null) tryWakeLock();
+    if (document.visibilityState === "visible") keepAwake();
   });
 
   connect();

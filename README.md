@@ -70,7 +70,7 @@ GT7_TTS_URL=http://<tts-host>:5000/v1
    | Windows | `ipconfig` (the "IPv4 Address" line) |
 
 4. On your phone, connected to the **same Wi-Fi**, open `http://<computer-ip>:7000`, e.g. `http://192.168.1.20:7000`.
-5. Tap **TAP FOR COACH** to turn on the voice. Phones only allow sound after a tap. Tap again to mute.
+5. Tap **TAP FOR COACH** to turn on the voice. Phones only allow sound after a tap. Tap again to mute. That first tap also keeps the phone's screen from turning off (see [Notes](#notes)).
 6. Drive. The top-left badge says **ON TRACK** once data is flowing. The track map appears a few hundred metres into a known track.
 
 Prefer the terminal? Run `.venv/bin/python gt7_telemetry.py` instead for the text dashboard. It has no coach or map. Run one or the other, not both.
@@ -153,6 +153,8 @@ git push
 3. **TTS speaks it.** The mp3 goes to the dashboard over the WebSocket and plays on your phone, with a caption.
 4. **It waits for a straight.** It won't talk mid-corner, keeps at least 7 s between lines, and drops a callout if no straight comes within 10 s. Lap debriefs can wait 60 s.
 
+**Corner names:** to help you learn a track, the coach says each corner's name about 2.5 s before you reach it ("Hatzenbach", "Flugplatz", "Aremberg"). Bends that share a name are announced once. Names cut off any other coaching line, and other lines wait until no name is due, so names always come first. The audio for every name is made when the server starts, so names play without delay. Only named turns are announced, so on tracks with plain "Turn 3" names it stays quiet. It's on by default. Tap **CORNERS** on the dashboard to switch it off or on while you drive, or set `GT7_CORNER_NAMES=0` in `.env` to start with it off.
+
 Your personal-best lap for each car and track is saved to `coach_refs.json`. That's what "slower than your best" compares against, so corner comparisons start after you've set a best lap. It's git-ignored, as personal data that stays on your machine.
 
 **Pronunciation:** Kokoro is an English voice and mangles German corner names ("Hocheichen" comes out as "Hot Chicken"). `tracks/pronunciations.csv` gives a phoneme spelling for each Nordschleife corner. Before a line is spoken, those names are swapped for Kokoro's inline form, `[Schwedenkreuz](/ʃvˈAdᵊnkɹˌYts/)`. Captions keep the normal spelling. To add a name, add a row: the name exactly as it appears in a `_turns.csv`, then its phonemes in [Kokoro's phoneme set](https://github.com/hexgrad/misaki/blob/main/EN_PHONES.md). Other TTS servers would read the brackets out loud, so empty that file if you use one.
@@ -177,5 +179,6 @@ If `GT7_LLM_URL` is blank or the LLM is down, the coach speaks fixed fallback li
 ## Notes
 
 - **Heartbeat:** `~` is sent to the PS5 on port `33739` every 10 seconds. GT7 stops sending if it doesn't hear one within about 16 seconds. `~` asks for GT7's longest packet format (`0x158` bytes), which adds steering angle, sway/heave/surge, filtered throttle/brake and energy recovery. Change `HEARTBEAT_PACKET` in `gt7_telemetry.py` to `b"A"` if your firmware doesn't respond to it.
+- **Screen staying on:** browsers only offer the screen Wake Lock API on `https://` pages or `localhost`, and the dashboard is plain `http://` on your network. So after your first tap the dashboard also plays a tiny silent looping video (`static/keepawake.mp4`, bottom-right corner, invisible), which phones treat as "watching something" and keep the screen on. If you switch apps or lock the phone, tap the dashboard once when you come back.
 - **Wheel slip** is tyre surface speed ÷ car speed: about 1.00 when rolling, above 1 for wheelspin, below 1 for lock-up.
 - **Car names** are fetched once at startup from [ddm999/gt7info](https://github.com/ddm999/gt7info). If the fetch fails you'll see numeric car codes.

@@ -28,13 +28,23 @@ TTS_URL = os.environ.get("GT7_TTS_URL", "").strip().rstrip("/")
 TTS_VOICE = os.environ.get("GT7_TTS_VOICE", "").strip() or "bm_george"
 
 REFS_FILE = Path(__file__).parent / "coach_refs.json"
-PRONUNCIATIONS_FILE = Path(__file__).parent / "tracks" / "pronunciations.csv"
+TRACKS_DIR = Path(__file__).parent / "tracks"
+PRONUNCIATIONS_FILE = TRACKS_DIR / "pronunciations.csv"
 
 FPS = 60                  # GT7 sends ~60 packets/s; frame counts below assume it
 MIN_GAP_S = 7             # minimum quiet time between callouts
 STALE_S = 10              # drop an in-lap callout if no straight came by then
 DEBRIEF_STALE_S = 60      # lap debriefs can wait for a long straight
 HISTORY = 8               # recent lines shown to the LLM so it doesn't repeat
+
+# Corner names: say each named section's name just before the car gets there,
+# for learning a track. Takes priority over every other callout.
+CORNER_NAMES = os.environ.get("GT7_CORNER_NAMES", "1").strip() not in ("0", "", "false", "no")
+NAME_LEAD_S = 2.5         # announce this long before the section starts...
+NAME_LEAD_MIN_M = 80      # ...but never closer than this
+NAME_STALE_S = 4          # a name that couldn't be said by then is skipped
+NAME_CLEAR_S = 6          # other callouts hold off if a name is due this soon
+GENERIC_TURN = re.compile(r"Turn \d+$")   # unnamed turns aren't announced
 
 SYSTEM_PROMPT = """\
 You are a race engineer talking to your driver over team radio during a \
@@ -105,6 +115,15 @@ def for_speech(text: str, pattern, table: dict) -> str:
     return pattern.sub(lambda m: f"[{m.group(0)}](/{table[m.group(0).lower()]}/)", text)
 
 
+def named_turns(tracks_dir: Path = TRACKS_DIR) -> list[str]:
+    """Every real corner name in tracks/*_turns.csv, for pre-making audio."""
+    names = []
+    for path in sorted(tracks_dir.glob("*_turns.csv")):
+        with open(path) as f:
+            names += [r["name"] for r in csv.DictReader(f) if r["name"]]
+    return list(dict.fromkeys(names))
+
+
 def fmt_laptime(ms: int) -> str | None:
     if ms is None or ms <= 0:
         return None
@@ -138,6 +157,12 @@ class Coach:
         self.model = LLM_MODEL
         self.http = httpx.AsyncClient(timeout=10)
         self.say_pattern, self.say_table = load_pronunciations()
+
+        self.corner_names = CORNER_NAMES
+        self.names: asyncio.Queue = asyncio.Queue()
+        self.name_audio: dict[str, bytes] = {}
+        self._announced: str | None = None
+        self._announced_track: str | None = None
 
         self.lockup = Detector(4)
         self.wheelspin = Detector(10)
@@ -196,6 +221,8 @@ class Coach:
 
         self.lap_top_kmh = max(self.lap_top_kmh, t["speed_kmh"])
         self._track_turns(t)
+        if self.corner_names:
+            self._corner_name(t)
 
         moving = t["speed_kmh"] > 40
         slip = t["wheel_slip"]
@@ -216,6 +243,41 @@ class Coach:
             self._event("rev_limiter", t, gear=t["gear"], rpm=round(t["rpm"]))
         if self.overlap.update(thr > 20 and brk > 20):
             self._event("overlap", t, throttle_pct=round(thr), brake_pct=round(brk))
+
+    def _due_name(self, t: dict) -> str | None:
+        """Name of the section the car is in or about to reach, if it has one."""
+        tp = t.get("track_pos")
+        if not tp:
+            return None
+        nxt, cur = tp["next_turn"], tp["turn"]
+        lead = max(NAME_LEAD_MIN_M, t["speed_kmh"] / 3.6 * NAME_LEAD_S)
+        turn = nxt if nxt and tp["next_turn_in_m"] <= lead else cur
+        if turn is None or GENERIC_TURN.match(turn["label"]):
+            return None
+        return turn["label"]
+
+    def _corner_name(self, t: dict) -> None:
+        """Queue a section's name once, as the car reaches it. Consecutive
+        turns sharing a name (Hatzenbach's bends) are announced once."""
+        track_id = t["track_pos"]["track_id"] if t.get("track_pos") else None
+        if track_id != self._announced_track:
+            self._announced_track, self._announced = track_id, None
+        name = self._due_name(t)
+        if name and name != self._announced:
+            self._announced = name
+            self.names.put_nowait((time.monotonic(), name))
+
+    def _name_soon(self) -> bool:
+        """True if a corner name is due within NAME_CLEAR_S, so other callouts wait."""
+        t = self.last
+        if not self.corner_names or t is None:
+            return False
+        tp = t.get("track_pos")
+        if not tp or not tp["next_turn"]:
+            return False
+        label = tp["next_turn"]["label"]
+        return (label != self._announced and not GENERIC_TURN.match(label)
+                and tp["next_turn_in_m"] < t["speed_kmh"] / 3.6 * NAME_CLEAR_S)
 
     def _track_turns(self, t: dict) -> None:
         """Per-corner min speed and braking point, compared to the best lap."""
@@ -363,7 +425,58 @@ class Coach:
         r.raise_for_status()
         return r.content
 
+    async def _name_tts(self, name: str) -> bytes:
+        if name not in self.name_audio:
+            self.name_audio[name] = await self._tts(name)
+        return self.name_audio[name]
+
+    async def _warm_names(self) -> None:
+        """Make every corner name's audio up front, so callouts are instant."""
+        for name in named_turns():
+            try:
+                await self._name_tts(name)
+            except Exception as e:
+                print(f"coach: couldn't pre-make corner name audio ({e!r})")
+                return
+
+    async def _run_names(self) -> None:
+        if TTS_URL:
+            asyncio.create_task(self._warm_names())
+        while True:
+            created, name = await self.names.get()
+            while not self.names.empty():   # only the newest one matters
+                created, name = self.names.get_nowait()
+            audio = b""
+            if TTS_URL:
+                try:
+                    audio = await self._name_tts(name)
+                except Exception as e:
+                    print(f"coach: TTS failed ({e!r})")
+            if time.monotonic() - created > NAME_STALE_S:
+                continue
+            self._last_said = time.monotonic()
+            self.broadcast(json.dumps({
+                "type": "coach",
+                "event": "corner_name",
+                "priority": True,   # dashboard cuts off whatever is playing
+                "text": name,
+                "audio": base64.b64encode(audio).decode() if audio else None,
+            }))
+
+    def set_corner_names(self, on: bool) -> None:
+        self.corner_names = on
+        self._announced = None
+        while not self.names.empty():
+            self.names.get_nowait()
+
     async def run(self) -> None:
+        names = asyncio.create_task(self._run_names())
+        try:
+            await self._run_callouts()
+        finally:
+            names.cancel()
+
+    async def _run_callouts(self) -> None:
         while True:
             created, event = await self.events.get()
             # merge anything else that piled up; keep the debrief if there is one
@@ -389,7 +502,7 @@ class Coach:
                 except Exception as e:
                     print(f"coach: TTS failed ({e!r})")
 
-            while (not self._safe_to_talk()
+            while (not self._safe_to_talk() or self._name_soon()
                    or time.monotonic() - self._last_said < MIN_GAP_S):
                 if time.monotonic() - created > stale:
                     break
